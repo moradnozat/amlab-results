@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<!--
+  AM LAB — patient result page (Firebase copy).
+
+  Patients open this page from the QR code on their receipt or from the link the
+  laboratory sends. The link looks like:
+      https://<your-github-name>.github.io/amlab-results/view.html#t=<secret>
+  The page turns the secret into a SHA-256 code in the phone's browser and reads
+  only that one document from Cloud Firestore. The secret after "#" is never
+  sent to GitHub or to Google.
+
+  The only thing to change in this file is STEP 1 below (your firebaseConfig).
+  STEP 2 is optional. Everything else is ready.
+-->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#006989">
+<link rel="icon" href="data:,">
+<title>Lab Results</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --brand: #006989;
+    --brand-dark: #004f68;
+    --ink: #1f2933;
+    --muted: #61707f;
+    --line: #e3e8ee;
+    --bg: #f3f6f9;
+    --card: #ffffff;
+    --ok: #15803d;   --ok-bg: #ecfdf3;
+    --info: #0b6aa2; --info-bg: #eaf5fc;
+    --warn: #a15c07; --warn-bg: #fff7e8;
+    --bad: #b42318;  --bad-bg: #fef1f0;
+    --high: #c2410c; --low: #1d4ed8; --critical: #b42318; --normal: #15803d;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    overflow-wrap: anywhere;
+  }
+  [dir="rtl"] body { font-family: "Noto Sans Arabic", system-ui, "Segoe UI", Tahoma, sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px 16px 32px; }
+
+  .langs { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .langs button {
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px;
+    padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; min-height: 32px;
+  }
+  .langs button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+  .head { text-align: center; margin-bottom: 16px; }
+  .logo { width: 64px; height: 64px; margin: 0 auto 8px; border-radius: 16px; overflow: hidden;
+          background: var(--brand); color: #fff; display: grid; place-items: center; font-size: 30px; }
+  .logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .head h1 { margin: 0; font-size: 22px; color: var(--brand-dark); }
+  .head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+  .card { background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 16px rgba(16,24,40,.05); padding: 18px; }
+  .loading { text-align: center; color: var(--muted); margin: 24px 0; }
+
+  .status { display: flex; gap: 12px; align-items: flex-start; border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
+  .status .ico { font-size: 22px; line-height: 1.2; flex: none; }
+  .status strong { display: block; font-size: 15.5px; }
+  .status p { margin: 2px 0 0; font-size: 13.5px; }
+  .status--success { background: var(--ok-bg); color: var(--ok); }
+  .status--info { background: var(--info-bg); color: var(--info); }
+  .status--warning { background: var(--warn-bg); color: var(--warn); }
+  .status--danger { background: var(--bad-bg); color: var(--bad); }
+  .status p, .status strong { color: var(--ink); }
+
+  .info { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 16px;
+          border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 18px; }
+  .info label { display: block; font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  [dir="rtl"] .info label { text-transform: none; letter-spacing: 0; }
+  .info div { font-weight: 600; }
+
+  .cat { font-size: 13px; color: var(--brand); text-transform: uppercase; letter-spacing: .05em; margin: 18px 0 8px; }
+  [dir="rtl"] .cat { text-transform: none; letter-spacing: 0; }
+  .res { border: 1px solid var(--line); border-inline-start: 4px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+  .res--high { border-inline-start-color: var(--high); }
+  .res--low { border-inline-start-color: var(--low); }
+  .res--critical { border-inline-start-color: var(--critical); background: var(--bad-bg); }
+  .res--normal { border-inline-start-color: var(--normal); }
+  .res--waiting { background: #fafbfc; }
+  .res__top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .res__name strong { font-size: 15.5px; }
+  .code { color: var(--muted); font-size: 12px; margin-inline-start: 6px; }
+  .value { font-size: 20px; font-weight: 700; }
+  .unit { color: var(--muted); font-size: 13px; margin-inline-start: 4px; }
+  .pending { color: var(--muted); font-size: 13.5px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+  .chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 1px 9px; font-weight: 600; font-size: 12px; }
+  .chip--high { background: #fff1e8; color: var(--high); }
+  .chip--low { background: #eef3ff; color: var(--low); }
+  .chip--critical { background: var(--bad); color: #fff; }
+  .chip--normal { background: var(--ok-bg); color: var(--normal); }
+  .chip--muted { background: #eef1f4; color: var(--muted); }
+  .verified { color: var(--ok); }
+
+  .comp-wrap { overflow-x: auto; margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; overflow-wrap: normal; }
+  th, td { text-align: start; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:last-child { white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+
+  .foot { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 12px; font-size: 12px; color: var(--muted); }
+  .foot p { margin: 0 0 6px; }
+  .actions { display: flex; justify-content: center; gap: 10px; margin: 16px 0; }
+  .btn { border: 0; border-radius: 10px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; min-height: 44px; }
+  .btn--primary { background: var(--brand); color: #fff; }
+  .btn--outline { background: var(--card); color: var(--brand); border: 1px solid var(--brand); }
+  .privacy { text-align: center; color: var(--muted); font-size: 12.5px; margin: 12px 0 0; }
+  .copy { text-align: center; color: var(--muted); font-size: 12px; margin-top: 18px; }
+  .demo { background: #fff3c4; color: #6b4e00; border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; text-align: center; }
+  .setup code { background: #eef1f4; padding: 1px 5px; border-radius: 5px; }
+
+  @media print {
+    body { background: #fff; font-size: 12.5px; }
+    .no-print { display: none !important; }
+    .wrap { max-width: none; padding: 0; }
+    .card { box-shadow: none; padding: 0; }
+    .res { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <nav class="langs no-print" id="langs" aria-label="Language"></nav>
+  <header class="head">
+    <div class="logo" id="logo" aria-hidden="true"><img src="logo.jpg" alt="" onerror="this.remove(); document.getElementById('logo').textContent='✚';"></div>
+    <h1 id="labName">AM LAB</h1>
+    <p id="subtitle"></p>
+  </header>
+  <section class="card" id="app" aria-live="polite"><p class="loading">…</p></section>
+  <p class="copy" id="copy"></p>
+</main>
+
+<script type="module">
+// ════════════════════════════════════════════════════════════════════════
+//  STEP 1 — PASTE YOUR FIREBASE CONFIG HERE  (the only required change)
+//
+//  Firebase console → ⚙ (gear) → Project settings → General → scroll to
+//  "Your apps" → choose the web app "amlab" → "SDK setup and configuration"
+//  → select "Config". Copy everything between the { and } and replace the
+//  lines between the { and } below. Keep "const firebaseConfig =" and the ";".
+//
+//  These values are NOT secret (every Firebase web page shows them). The data
+//  is protected by firestore.rules, not by hiding this block.
+// ════════════════════════════════════════════════════════════════════════
+const firebaseConfig = {
+  apiKey: "PASTE_YOUR_API_KEY_HERE",
+  authDomain: "am-lab-3fb87.firebaseapp.com",
+  projectId: "am-lab-3fb87",
+  storageBucket: "am-lab-3fb87.firebasestorage.app",
+  messagingSenderId: "PASTE_YOUR_SENDER_ID_HERE",
+  appId: "PASTE_YOUR_APP_ID_HERE"
+};
+
+// ════════════════════════════════════════════════════════════════════════
+//  STEP 2 (optional) — shown when a link does not open, so the patient can
+//  call you. Example: phone: "+964 750 000 0000"
+// ════════════════════════════════════════════════════════════════════════
+const LAB = { name: "AM LAB", phone: "+964 750 123 4567" };
+
+// ─── Nothing below needs to be changed ──────────────────────────────────
+
+const SDK = "https://www.gstatic.com/firebasejs/12.19.0";
+const COLLECTION = "results";
+
+// Wording reused from the laboratory system (lang/*.php), so both pages say the same.
+const I18N = {
+  "en": {
+    "portal.lab_results": "Lab Results", "portal.results_portal": "Secure Patient Results Portal",
+    "portal.patient_name": "Patient Name", "portal.patient_id": "Patient ID", "portal.order_id": "Order ID",
+    "portal.order_date": "Order Date", "portal.gender": "Gender", "portal.pending": "Not released",
+    "portal.reference_range": "Reference Range", "portal.verified": "Verified", "portal.needs_new_sample": "New sample needed",
+    "portal.important": "IMPORTANT:", "portal.disclaimer": "This report is for informational purposes only. Please consult your physician for interpretation of results.",
+    "portal.print_report": "Print Report", "portal.keep_private": "Keep this link private: anyone who has it can see these results.",
+    "portal.link_valid_until": "This secure link works until :date.", "portal.contact_lab": "Laboratory phone:",
+    "portal.privacy_note": "Results are shown only through a secure link, never by name or phone number alone.",
+    "portal.state_completed_title": "Your results are ready", "portal.state_completed_text": "All results were checked and released by the laboratory.",
+    "portal.state_partial_title": "Some results are ready", "portal.state_partial_text": ":ready of :total results are ready. The others are still being processed.",
+    "portal.rejected_note": "One or more tests need a new sample. The laboratory will contact you.",
+    "portal.all_rights": "All rights reserved.", "portal.license": "License: :license", "portal.generated_on": "Generated on :datetime",
+    "components.component": "Component", "components.n_values": ":n values", "results.result": "Result",
+    "flags.high": "High", "flags.low": "Low", "flags.critical": "Critical", "flags.normal": "Normal",
+    "gender.male": "Male", "gender.female": "Female", "common.loading": "Loading…",
+    "fb.not_found_title": "Results not found",
+    "fb.not_found_text": "This link is not valid or has expired, or your results are not ready yet. Make sure you opened the complete link.",
+    "fb.network_title": "Could not load the results", "fb.network_text": "Check your internet connection and try again.", "fb.try_again": "Try again"
+  },
+  "ar": {
+    "portal.lab_results": "نتائج المختبر", "portal.results_portal": "بوابة نتائج المرضى الآمنة",
+    "portal.patient_name": "اسم المريض", "portal.patient_id": "معرّف المريض", "portal.order_id": "رقم الطلب",
+    "portal.order_date": "تاريخ الطلب", "portal.gender": "الجنس", "portal.pending": "لم تُنشر بعد",
+    "portal.reference_range": "المدى المرجعي", "portal.verified": "معتمدة", "portal.needs_new_sample": "تلزم عيّنة جديدة",
+    "portal.important": "هام:", "portal.disclaimer": "هذا التقرير لأغراض إعلامية فقط. الرجاء استشارة طبيبك لتفسير النتائج.",
+    "portal.print_report": "طباعة التقرير", "portal.keep_private": "احتفظ بهذا الرابط لنفسك: أي شخص يملكه يستطيع رؤية هذه النتائج.",
+    "portal.link_valid_until": "هذا الرابط الآمن صالح حتى :date.", "portal.contact_lab": "هاتف المختبر:",
+    "portal.privacy_note": "تُعرض النتائج فقط عبر رابط آمن، ولا تُعرض أبدًا بالاسم أو برقم الهاتف وحده.",
+    "portal.state_completed_title": "نتائجك جاهزة", "portal.state_completed_text": "تم فحص جميع النتائج واعتمادها من قبل المختبر.",
+    "portal.state_partial_title": "بعض النتائج جاهزة", "portal.state_partial_text": ":ready من أصل :total نتائج جاهزة، والبقية ما زالت قيد المعالجة.",
+    "portal.rejected_note": "يحتاج فحص أو أكثر إلى عيّنة جديدة، وسيتواصل معك المختبر.",
+    "portal.all_rights": "جميع الحقوق محفوظة.", "portal.license": "الترخيص: :license", "portal.generated_on": "أُنشئ في :datetime",
+    "components.component": "المكوّن", "components.n_values": ":n قيم", "results.result": "النتيجة",
+    "flags.high": "مرتفع", "flags.low": "منخفض", "flags.critical": "حرج", "flags.normal": "طبيعي",
+    "gender.male": "ذكر", "gender.female": "أنثى", "common.loading": "جارٍ التحميل…",
+    "fb.not_found_title": "لم يتم العثور على النتائج",
+    "fb.not_found_text": "هذا الرابط غير صالح أو انتهت صلاحيته، أو أن نتائجك ليست جاهزة بعد. تأكّد من فتح الرابط كاملًا.",
+    "fb.network_title": "تعذّر تحميل النتائج", "fb.network_text": "تحقّق من اتصالك بالإنترنت وحاول مرة أخرى.", "fb.try_again": "إعادة المحاولة"
+  },
+  "ku-badini": {
+    "portal.lab_results": "ئەنجامێن تاقیگەهێ", "portal.results_portal": "دەروازەیا پارستی یا ئەنجامێن نەخۆشان",
+    "portal.patient_name": "ناڤێ نەخۆشی", "portal.patient_id": "ناسنامەیا نەخۆشی", "portal.order_id": "ژمارا داخوازێ",
+    "portal.order_date": "بەروارا داخوازێ", "portal.gender": "رەگەز", "portal.pending": "هێشتا نەهاتە بەلاڤکرن",
+    "portal.reference_range": "ماوەیا ژێدەری", "portal.verified": "پەسەندکری", "portal.needs_new_sample": "پێدڤی ب نموونەیەکا نوی یە",
+    "portal.important": "گرنگ:", "portal.disclaimer": "ئەڤ ڕاپۆرتە تنێ بۆ ئاگەهداریێیە. تکایە بۆ شرۆڤەکرنا ئەنجامان سەرەدانا دکتۆرێ خۆ بکە.",
+    "portal.print_report": "چاپکرنا ڕاپۆرتی", "portal.keep_private": "ئەڤی لینکی بۆ خۆ بپارێزە: هەر کەسێ ئەڤ لینکە هەبیت دشێت ڤان ئەنجامان ببینیت.",
+    "portal.link_valid_until": "ئەڤ لینکێ پارستی هەتا :date کاردکەت.", "portal.contact_lab": "تەلەفۆنا تاقیگەهێ:",
+    "portal.privacy_note": "ئەنجام تنێ ب ڕێکا لینکەکێ پارستی دهێنە نیشاندان، و قەت تنێ ب ناڤ یان ژمارا تەلەفۆنێ ناهێنە نیشاندان.",
+    "portal.state_completed_title": "ئەنجامێن تە ئامادەنە", "portal.state_completed_text": "هەمی ئەنجام ژ لایێ تاقیگەهێ ڤە هاتنە پشکنین و پەسەندکرن.",
+    "portal.state_partial_title": "هندەک ئەنجام ئامادەنە", "portal.state_partial_text": ":ready ژ :total ئەنجامان ئامادەنە، یێن دی هێشتا د کارکرنێدانە.",
+    "portal.rejected_note": "ئێک یان پتر ژ پشکنینان پێدڤی ب نموونەیەکا نوی نە، تاقیگەه دێ پەیوەندیێ ب تە کەت.",
+    "portal.all_rights": "هەمی ماف پارستین.", "portal.license": "مۆڵەت: :license", "portal.generated_on": "هاتیە دروستکرن ل :datetime",
+    "components.component": "پێکهاتە", "components.n_values": ":n بها", "results.result": "ئەنجام",
+    "flags.high": "بلند", "flags.low": "نزم", "flags.critical": "مەترسیدار", "flags.normal": "ئاسایی",
+    "gender.male": "نێر", "gender.female": "مێ", "common.loading": "د بارکرنێدایە…",
+    "fb.not_found_title": "ئەنجام نەهاتنە دیتن",
+    "fb.not_found_text": "ئەڤ لینکە نەدروستە یان دەمێ وی بەسەرچوو، یان ئەنجامێن تە هێشتا ئامادە نینن. پشتڕاست بە کو تە لینک ب تەواوی ڤەکریە.",
+    "fb.network_title": "ئەنجام نەشیان بێنە بارکرن", "fb.network_text": "گرێدانا ئینتەرنێتێ بپشکنە و دیسا هەوڵ بدە.", "fb.try_again": "دیسا هەوڵ بدە"
+  }
+};
+const LOCALES = {
+  "en": { dir: "ltr", html: "en", native: "English" },
+  "ar": { dir: "rtl", html: "ar", native: "العربية" },
+  "ku-badini": { dir: "rtl", html: "ku", native: "کوردیی بادینی" }
+};
+const FLAG_ICON = { high: "↑", low: "↓", critical: "⚠", normal: "✓" };
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// ─── Link: #t=<secret>&lang=xx (also ?t= and ?id=) ──────────────────────
+const hashArgs = new URLSearchParams(location.hash.slice(1));
+const queryArgs = new URLSearchParams(location.search);
+const arg = (k) => hashArgs.get(k) ?? queryArgs.get(k) ?? "";
+const secret = (arg("t") || arg("id")).trim();
+const isLocal = location.protocol === "file:" || ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+const demo = isLocal && (hashArgs.has("demo") || queryArgs.has("demo"));
+
+let lang = pickLang();
+let state = { kind: "loading" };
+
+function pickLang() {
+  let saved = null;
+  try { saved = localStorage.getItem("amlab_lang"); } catch (e) { /* storage blocked */ }
+  if (LOCALES[saved]) return saved;
+  if (LOCALES[arg("lang")]) return arg("lang");
+  const nav = (navigator.language || "").toLowerCase();
+  if (nav.startsWith("ar")) return "ar";
+  if (nav.startsWith("ku") || nav.startsWith("ckb") || nav.startsWith("kmr")) return "ku-badini";
+  return "en";
+}
+
+function t(key, params = {}) {
+  let s = I18N[lang][key] ?? I18N.en[key] ?? key;
+  for (const [k, v] of Object.entries(params)) s = s.split(":" + k).join(String(v));
+  return s;
+}
+
+// Builds elements with text only: values from the database never become HTML.
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : String(v));
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid == null || kid === false || kid === "") continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+const bdi = (v) => h("bdi", null, v);
+
+function fmtDate(s, withTime = false) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(String(s || ""));
+  if (!m) return "—";
+  const pad = (n) => String(n).padStart(2, "0");
+  const [y, mo, d] = [+m[1], +m[2], +m[3]];
+  const hasTime = withTime && m[4] != null;
+  if (lang === "en") {
+    let out = `${MONTHS[mo - 1]} ${d}, ${y}`;
+    if (hasTime) { const H = +m[4]; out += ` ${H % 12 || 12}:${m[5]} ${H < 12 ? "AM" : "PM"}`; }
+    return out;
+  }
+  return `${y}/${pad(mo)}/${pad(d)}` + (hasTime ? ` ${m[4]}:${m[5]}` : "");
+}
+function localStamp(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// ─── Screens ────────────────────────────────────────────────────────────
+function statusBox(kind, icon, title, text, extra) {
+  return h("div", { class: `status status--${kind}`, role: "status" },
+    h("span", { class: "ico", "aria-hidden": "true" }, icon),
+    h("div", null, h("strong", null, title), text ? h("p", null, text) : null, extra || null));
+}
+
+function flagChip(flag) {
+  return flag ? h("span", { class: `chip chip--${flag}` }, FLAG_ICON[flag] || "", " ", t("flags." + flag)) : null;
+}
+
+function resultCard(r) {
+  const released = r.state === "released";
+  const flag = released ? (r.flag || "") : "";
+  const comps = released && Array.isArray(r.components) ? r.components : [];
+  const cls = ["res", flag ? `res--${flag}` : "", released ? "" : "res--waiting"].filter(Boolean).join(" ");
+
+  let value;
+  if (released && comps.length) value = h("span", { class: "unit" }, t("components.n_values", { n: comps.length }));
+  else if (released) value = h("span", null, h("span", { class: "value" }, bdi(r.value)), r.unit ? h("span", { class: "unit" }, bdi(r.unit)) : null);
+  else value = h("span", { class: "pending" }, "⏳ ", t("portal.pending"));
+
+  const meta = h("div", { class: "meta" },
+    r.range ? h("span", null, t("portal.reference_range"), ": ", bdi(r.range)) : null,
+    flagChip(flag),
+    released ? h("span", { class: "verified" }, "✔ ", t("portal.verified"), " · ", bdi(fmtDate(r.date))) : null,
+    r.state === "rejected" ? h("span", { class: "chip chip--critical" }, t("portal.needs_new_sample")) : null);
+
+  const table = comps.length ? h("div", { class: "comp-wrap" }, h("table", null,
+    h("thead", null, h("tr", null, h("th", null, t("components.component")), h("th", null, t("results.result")), h("th", null, t("portal.reference_range")))),
+    h("tbody", null, comps.map((c) => h("tr", null,
+      h("td", null, c.name),
+      h("td", null, h("strong", null, bdi(c.value || "—")), c.unit ? h("span", { class: "unit" }, bdi(c.unit)) : null, c.flag ? [" ", flagChip(c.flag)] : null),
+      h("td", null, bdi(c.range || "")))))) ) : null;
+
+  return h("article", { class: cls },
+    h("div", { class: "res__top" },
+      h("div", { class: "res__name" }, h("strong", null, r.name), h("span", { class: "code" }, bdi(r.code))),
+      h("div", null, value)),
+    meta, table);
+}
+
+function resultScreen(d) {
+  const results = Array.isArray(d.results) ? d.results : [];
+  const released = Number(d.released) || 0;
+  const total = Number(d.total) || results.length;
+  const all = released >= total;
+  const gender = d.patient?.gender ? (I18N[lang]["gender." + d.patient.gender] ? t("gender." + d.patient.gender) : d.patient.gender) : "—";
+  const updated = d.updatedAt instanceof Date ? localStamp(d.updatedAt) : "";
+
+  let category = null;
+  const list = [];
+  for (const r of results) {
+    if (r.category !== category) { category = r.category; if (category) list.push(h("h2", { class: "cat" }, category)); }
+    list.push(resultCard(r));
+  }
+
+  const lab = d.lab || {};
+  return [
+    statusBox(all ? "success" : "info", all ? "✓" : "⏳",
+      t(all ? "portal.state_completed_title" : "portal.state_partial_title"),
+      all ? t("portal.state_completed_text") : t("portal.state_partial_text", { ready: released, total }),
+      Number(d.rejected) > 0 ? h("p", null, t("portal.rejected_note")) : null),
+    h("div", { class: "info" },
+      h("section", null, h("label", null, t("portal.patient_name")), h("div", null, d.patient?.name || "—")),
+      h("section", null, h("label", null, t("portal.patient_id")), h("div", null, bdi(d.patient?.id || "—"))),
+      h("section", null, h("label", null, t("portal.order_id")), h("div", null, bdi(d.order?.id || "—"))),
+      h("section", null, h("label", null, t("portal.order_date")), h("div", null, bdi(fmtDate(d.order?.date, true)))),
+      h("section", null, h("label", null, t("portal.gender")), h("div", null, gender))),
+    list,
+    h("footer", { class: "foot" },
+      h("p", null, h("strong", null, t("portal.important")), " ", t("portal.disclaimer")),
+      h("p", null, updated ? t("portal.generated_on", { datetime: fmtDate(updated, true) }) + " · " : "", lab.name || LAB.name,
+        lab.license ? " · " + t("portal.license", { license: lab.license }) : ""))
+  ];
+}
+
+function render() {
+  const loc = LOCALES[lang];
+  document.documentElement.lang = loc.html;
+  document.documentElement.dir = loc.dir;
+
+  const data = state.kind === "ok" ? state.data : null;
+  const lab = data?.lab || {};
+  const labName = lab.name || LAB.name;
+  const phone = lab.phone || LAB.phone;
+  document.title = `${t("portal.lab_results")} — ${labName}`;
+  document.getElementById("labName").textContent = labName;
+  const sub = document.getElementById("subtitle");
+  sub.replaceChildren(t("portal.results_portal"));
+  if (lab.address || phone) sub.append(h("br"), lab.address || "", lab.address && phone ? " · " : "", phone ? bdi(phone) : "");
+  document.getElementById("copy").textContent = `© ${new Date().getFullYear()} ${labName}. ${t("portal.all_rights")}`;
+
+  document.getElementById("langs").replaceChildren(...Object.entries(LOCALES).map(([code, l]) =>
+    h("button", { type: "button", lang: l.html, "aria-pressed": String(code === lang), onclick: () => {
+      lang = code;
+      try { localStorage.setItem("amlab_lang", code); } catch (e) { /* storage blocked */ }
+      render();
+    } }, l.native)));
+
+  const app = document.getElementById("app");
+  const parts = [];
+  if (demo) parts.push(h("div", { class: "demo no-print" }, "DEMO — sample data, not a real patient. Only shown when the page is opened on this computer."));
+
+  if (state.kind === "loading") {
+    parts.push(h("p", { class: "loading" }, t("common.loading")));
+  } else if (state.kind === "ok") {
+    parts.push(resultScreen(data));
+  } else if (state.kind === "network") {
+    parts.push(statusBox("warning", "⚠", t("fb.network_title"), t("fb.network_text")),
+      h("div", { class: "actions no-print" }, h("button", { class: "btn btn--primary", type: "button", onclick: () => load() }, t("fb.try_again"))));
+  } else if (state.kind === "setup") {
+    parts.push(h("div", { class: "setup", dir: "ltr", lang: "en" },
+      statusBox("info", "ⓘ", "Setup needed", "This page has no Firebase configuration yet.",
+        h("p", null, "Open ", h("code", null, "view.html"), " in Notepad, paste your firebaseConfig at ", h("strong", null, "STEP 1"), ", save, and upload the file again."))));
+  } else {
+    parts.push(statusBox("danger", "✕", t("fb.not_found_title"), t("fb.not_found_text")));
+    if (phone) parts.push(h("p", { class: "privacy" }, t("portal.contact_lab"), " ", bdi(phone)));
+    parts.push(h("p", { class: "privacy" }, "🔒 ", t("portal.privacy_note")));
+  }
+  app.replaceChildren(...parts.flat(Infinity));
+
+  // Print button and privacy line sit outside the card, like the laboratory page.
+  document.querySelectorAll(".after-card").forEach((n) => n.remove());
+  if (state.kind === "ok") {
+    app.after(
+      h("div", { class: "actions no-print after-card" }, h("button", { class: "btn btn--outline", type: "button", onclick: () => window.print() }, "🖨 ", t("portal.print_report"))),
+      h("p", { class: "privacy no-print after-card" }, "🔒 ", t("portal.keep_private"), " ",
+        data.validUntil ? t("portal.link_valid_until", { date: fmtDate(data.validUntil) }) : ""));
+  }
+}
+
+// ─── Loading the one document ───────────────────────────────────────────
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error("timeout"), { code: "unavailable" })), ms))]);
+}
+
+let firestore = null;
+async function load() {
+  state = { kind: "loading" };
+  render();
+
+  if (demo) { state = { kind: "ok", data: demoData() }; render(); return; }
+  if (!firebaseConfig.projectId || String(firebaseConfig.apiKey).startsWith("PASTE_")) { state = { kind: "setup" }; render(); return; }
+  // Order secrets are 64–128 lowercase hex characters; anything else cannot match.
+  if (!/^[a-f0-9]{64,128}$/.test(secret) || !window.crypto?.subtle) { state = { kind: "notfound" }; render(); return; }
+
+  try {
+    const docId = await sha256Hex(secret);
+    if (!firestore) {
+      const { initializeApp } = await import(`${SDK}/firebase-app.js`);
+      const { getFirestore } = await import(`${SDK}/firebase-firestore.js`);
+      firestore = getFirestore(initializeApp(firebaseConfig));
+    }
+    const { doc, getDoc } = await import(`${SDK}/firebase-firestore.js`);
+    const snap = await withTimeout(getDoc(doc(firestore, COLLECTION, docId)), 15000);
+    if (!snap.exists()) { state = { kind: "notfound" }; render(); return; }
+    const data = snap.data();
+    if (data.updatedAt?.toDate) data.updatedAt = data.updatedAt.toDate();
+    state = { kind: "ok", data };
+  } catch (err) {
+    // Unknown, expired and not-yet-uploaded links all look the same (the rules refuse them).
+    const code = err?.code || "";
+    state = { kind: code === "permission-denied" || code === "not-found" ? "notfound" : "network" };
+    if (state.kind === "network") console.error("[AM LAB] could not load the result:", err);
+  }
+  render();
+}
+
+function demoData() {
+  return {
+    lab: { name: "AM LAB", phone: LAB.phone, address: "", license: "" },
+    patient: { name: "Demo Patient", id: "PT-000123", gender: "female" },
+    order: { id: "ORD-20261003-0001", date: "2026-10-03 09:15:00", status: "partial" },
+    released: 3, total: 4, rejected: 0, validUntil: "2026-11-02 09:15:00", updatedAt: new Date(),
+    results: [
+      { category: "Biochemistry", code: "FBS", name: "Fasting Blood Sugar", state: "released", value: "128", unit: "mg/dL", range: "70-100", flag: "high", date: "2026-10-03 11:02:00", components: [] },
+      { category: "Biochemistry", code: "BUN", name: "Blood Urea Nitrogen", state: "released", value: "14", unit: "mg/dL", range: "7-20", flag: "normal", date: "2026-10-03 11:02:00", components: [] },
+      { category: "Biochemistry", code: "CRP", name: "C-Reactive Protein", state: "pending", range: "< 5 mg/L" },
+      { category: "Hematology", code: "CBC", name: "Complete Blood Count", state: "released", value: "3 values", unit: "", range: "", flag: "low", date: "2026-10-03 10:40:00",
+        components: [
+          { name: "White blood cells", value: "6.2", unit: "10^3/uL", range: "4.0-11.0", flag: "" },
+          { name: "Hemoglobin", value: "11.1", unit: "g/dL", range: "12.0-15.5", flag: "low" },
+          { name: "Platelets", value: "250", unit: "10^3/uL", range: "150-450", flag: "" }
+        ] }
+    ]
+  };
+}
+
+// A different secret typed into the address bar of an open page.
+window.addEventListener("hashchange", () => location.reload());
+load();
+</script>
+</body>
+</html>
